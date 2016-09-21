@@ -48,39 +48,34 @@ namespace Decider.Debating
 
             //Positions[room * position] = TeamId
             var positions = new List<VariableInteger>(teams.Length);
-            var maxScore = teams.Max(x => x.Score);
-            var roomsForMax = (int)Math.Ceiling(teams.Count(x => x.Score == maxScore) / 4.0);
             for (var i = 0; i < teams.Length; i++)
             {
-                //if (teams[i].Score == maxScore)
-                //{
-                //    positions.Add(new VariableInteger($"Team_{i}", 0, roomsForMax));
-                //}
-                //else {  }
                 positions.Add(new VariableInteger($"Team_{i}", 0, teams.Length - 1));
             }
-
-
-
+            
             //Scores[teamId] = current score
             var scores = new ConstrainedArray(teams.Select(x => x.Score));
 
-            //
+            //Optimise positions
             var firstProp = new ConstrainedArray(teams.Select(x => x.FirstProp * badnessFactor));
             var secondProp = new ConstrainedArray(teams.Select(x => x.SecondProp * badnessFactor));
             var firstOpp = new ConstrainedArray(teams.Select(x => x.FirstOpp * badnessFactor));
             var secondOpp = new ConstrainedArray(teams.Select(x => x.SecondOpp * badnessFactor));
+            var maxBadness = firstProp.Union(secondProp).Union(firstOpp).Union(secondOpp).Max() * teams.Length;
+            var optimise = new VariableInteger("optimise", 0, maxBadness);
 
-            var constraints = new List<IConstraint>();
-            constraints.Add(new AllDifferentInteger(positions));
+            //TODO Change optimise to look at the bound and stop if best reached
+            var variables = new List<VariableInteger>(positions);
+            variables.Add(optimise);
+            var constraints = new List<IConstraint> { new AllDifferentInteger(positions) };
 
             for (var i = 0; i < rooms - 1; i++)
             {
-                for (int j = 0; j < 4; j++)
+                for (var j = 0; j < 4; j++)
                 {
                     var x = positions[i * 4 + j];
 
-                    for (int k = 0; k < 4; k++)
+                    for (var k = 0; k < 4; k++)
                     {
                         var y = positions[(i + 1) * 4 + k];
                         constraints.Add(new ConstraintInteger(scores[x] >= scores[y]));
@@ -88,19 +83,38 @@ namespace Decider.Debating
                 }
             }
 
-            IState<int> state = new StateInteger(positions, constraints);
-            StateOperationResult searchResult;
-            state.StartSearch(out searchResult);
+            constraints.Add(new ConstraintInteger(optimise == maxBadness -
+                firstProp[positions[0]] - firstOpp[positions[1]] - secondProp[positions[2]] - secondOpp[positions[3]]
+                ));
 
-            Console.WriteLine("Runtime:\t{0}\nBacktracks:\t{1}\n", state.Runtime, state.Backtracks);
+            IState<int> state = new StateInteger(variables, constraints);
+            StateOperationResult searchResult;
+            IDictionary<string, IVariable<int>> solution;
+            state.StartSearch(out searchResult, optimise, out solution, 2);
+
+            if (searchResult == StateOperationResult.Unsatisfiable)
+            {
+                Console.WriteLine("Could not find a solution");
+                Console.ReadKey();
+                return;
+            }
+            if (searchResult == StateOperationResult.TimedOut)
+            {
+                Console.WriteLine("Search timed out before a solution could be found");
+                Console.ReadKey();
+                return;
+            }
+
+            Console.WriteLine("Runtime:\t{0}\nBacktracks:\t{1}\nSolutions:\t{2}", state.Runtime, state.Backtracks, state.NumberOfSolutions);
+            Console.WriteLine("Badness:\t{0}", solution[optimise.Name].InstantiatedValue);
 
             Console.WriteLine("Room | 1P | 1O | 2P | 2O | Scores ");
             for (var i = 0; i < rooms; i++)
             {
-                var fp = positions[i * 4].Value;
-                var sp = positions[i * 4 + 1].Value;
-                var fo = positions[i * 4 + 2].Value;
-                var so = positions[i * 4 + 3].Value;
+                var fp = solution[positions[i * 4].Name].InstantiatedValue;
+                var sp = solution[positions[i * 4 + 1].Name].InstantiatedValue;
+                var fo = solution[positions[i * 4 + 2].Name].InstantiatedValue;
+                var so = solution[positions[i * 4 + 3].Name].InstantiatedValue;
 
                 Console.WriteLine("{0,-5}|{1,3} |{2,3} |{3,3} |{4,3} | {5} {6} {7} {8}", i, fp, sp, fo, so, scores[fp], scores[sp], scores[fo], scores[so]);
             }
